@@ -1,0 +1,229 @@
+---
+title: "Assignment 2"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+Since credit datasets are non-numerical, we pick __applications__ datasets for regression analysis
+export applications dataframes from Assignment 1
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(pastecs)
+library(gridExtra)
+library(psych)
+library(data.table)
+library(PerformanceAnalytics)
+#data <- read.csv("applications_df.tsv")
+```
+
+### Summary of dataset
+```{r}
+str(data)
+```
+
+```{r}
+`[`   <- function(...) {UseMethod("["  )}
+`[<-` <- function(...) {UseMethod("[<-")}
+`$`   <- function(...) {UseMethod("$"  )}
+`$<-` <- function(...) {UseMethod("$<-")}
+
+`[.function` <- `[.closure` <- function(func, arg_name) {
+  if (arg_name %in% names(formals(func))) {
+    formals(func)[[arg_name]]
+  } else {
+    warning("No such formal argument: ", arg_name)
+  }
+}
+
+`[<-.function` <- `[<-.closure` <- function(func, arg_name, value) {
+  fargs             <- formals(func)
+  fargs[[arg_name]] <- value
+  formals(func)     <- fargs
+  func
+}
+
+`$.function` <- `$.closure` <- function(func, arg_name) {
+  func[as.character(substitute(arg_name))]
+  func
+}
+
+`$<-.function` <- `$<-.closure` <- function(func, arg_name, value) {
+  func[as.character(substitute(arg_name))] <- value
+  func
+}
+```
+
+
+Clean data
+
+```{r}
+df <- data[c(3,7:13,19)]
+
+df$AMT_INCOME_k = df$AMT_INCOME_TOTAL/1000
+df$YRS_EMPLOYED <- round(abs(df$DAYS_EMPLOYED)/365, digits=2)
+df$AGE <- round(abs(df$DAYS_BIRTH/365), digits=2)
+df <- rename(df, FAMILY_SIZE = CNT_FAM_MEMBERS)
+df$DAYS_EMPLOYED <- df$DAYS_BIRTH <- df$AMT_INCOME_TOTAL <- NULL
+```
+
+```{r}
+summary(df)
+```
+
+### Generate models to predict an outcome
+
+Linear Regression
+```{r}
+linear_mod <- lm(AMT_INCOME_k ~ AGE, data = df)
+linear_mod
+ggplot(linear_mod, aes(x = AGE, y = AMT_INCOME_k)) + geom_point() + ggtitle("Age vs Annual Income Regression model") + xlab("Age") + ylab("Income $k") 
+#Unfortunately there is no linear relationship here
+
+```
+
+performance metrics
+Coefficient of Determination
+```{r}
+coef(linear_mod)
+exp(coef(linear_mod))
+```
+```{r}
+linear_residplot <- function(linear_mod, nbreaks=10) {
+  z <- rstudent(linear_mod)
+  hist(z, breaks=nbreaks, freq=FALSE,
+       xlab="Studentized Residual",
+       main="Distribution of Errors")
+  rug(jitter(z), col="brown")
+  curve(dnorm(x, mean=mean(z), sd=sd(z)),
+        add=TRUE, col="blue", lwd=2)
+  lines(density(z)$x, density(z)$y,
+        col="red", lwd=2, lty=2)
+  legend("topright",
+         legend = c( "Normal Curve", "Kernel Density Curve"),
+         lty=1:2, col=c("blue","red"), cex=.7)
+}
+
+linear_residplot(linear_mod)
+```
+
+
+
+```{r}
+library(lattice)
+xyplot(AMT_INCOME_k ~ AGE, data = df,group = NAME_EDUCATION_TYPE, auto.key = list(title = "Annual Income vs Age by Education Levels", columns = 5))
+```
+
+
+Multiple Regression
+```{r}
+df.num = df[ , unlist(lapply(df, is.numeric))]
+
+corr.test(df.num, use = "pairwise", method="pearson", adjust="none", alpha=.05)           # Can adjust p-values; see ?p.adjust for options
+          
+pairs(data=df,~ YRS_EMPLOYED +AGE + AMT_INCOME_k +FAMILY_SIZE)
+chart.Correlation(df.num, method="pearson", histogram=TRUE, pch=20)
+```
+
+
+```{r}
+## Model selection using the step function
+model.null = lm(AMT_INCOME_k ~ 1, data= df)
+model.null
+
+```
+
+
+```{r}
+model.full = lm(AMT_INCOME_k ~ factor(CODE_GENDER) +factor(NAME_EDUCATION_TYPE) +YRS_EMPLOYED +AGE +FAMILY_SIZE, data = df)
+summary(model.full)
+```
+
+
+```{r}
+## Stepwise regressions
+step(model.null,
+     scope = list(upper=model.full),
+     direction="both",
+     data= df) 
+
+```
+```{r}
+multi_mod = lm(AMT_INCOME_k ~ factor(NAME_EDUCATION_TYPE) +factor(CODE_GENDER) + YRS_EMPLOYED + AGE + FAMILY_SIZE, data = df)
+summary(multi_mod)
+```
+```{r}
+df$predy = predict(multi_mod)
+plot(predy ~ AMT_INCOME_k,
+     data= df,
+     pch = 16,
+     col = "darkgray",
+     xlab="Actual total annual income",
+     ylab="Predicted total annual income")
+abline(0,1, col="blue", lwd=2)
+```
+```{r}
+hist(residuals(multi_mod),
+     col="lightblue")
+```
+
+
+
+### Explain the results of the models using performance metrics
+
+Coefficient of Determination
+```{r}
+coef(multi_mod)
+exp(coef(multi_mod))
+```
+
+
+plotting studentized residual
+```{r}
+residplot <- function(multi_mod, nbreaks=10) {
+  z <- rstudent(multi_mod)
+  hist(z, breaks=nbreaks, freq=FALSE,
+       xlab="Studentized Residual",
+       main="Distribution of Errors")
+  rug(jitter(z), col="brown")
+  curve(dnorm(x, mean=mean(z), sd=sd(z)),
+        add=TRUE, col="blue", lwd=2)
+  lines(density(z)$x, density(z)$y,
+        col="red", lwd=2, lty=2)
+  legend("topright",
+         legend = c( "Normal Curve", "Kernel Density Curve"),
+         lty=1:2, col=c("blue","red"), cex=.7)
+}
+
+residplot(multi_mod)
+
+```
+
+QQ plots- Assessing normality
+```{r}
+qqPlot(multi_mod, labels=row.names(df), id.method="identify",
+       simulate=TRUE, main="Q-Q Plot")
+```
+
+### Improve the model
+Assessing linearity
+```{r}
+library(car)
+crPlots(multi_mod)
+```
+
+Assessing homoscedasticity
+```{r}
+ncvTest(multi_mod)
+spreadLevelPlot(multi_mod)
+```
+
+Assessing multicollinearity
+```{r}
+vif(multi_mod) 
+sqrt(vif(multi_mod)) > 2
+```
+
+
